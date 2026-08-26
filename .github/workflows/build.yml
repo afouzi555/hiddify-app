@@ -250,6 +250,10 @@ jobs:
 
 
       - name: Prepare for ${{ matrix.platform }}
+        env:
+          # sing-box gomobile bind is memory-hungry; cap parallelism to avoid OOM on 7GB runners
+          GOMAXPROCS: '2'
+          GOGC: '50'
         run: |
           make ${{ matrix.platform }}-prepare
 
