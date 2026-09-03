@@ -57,6 +57,17 @@ class BoxService(
     companion object {
         private const val TAG = "A/BoxService"
 
+        // ── Log group activation flags (see /Volumes/imac/tools_core/programming_logging.md) ──
+        // bug: Nord 5G connect-tap -> app quits with a native SIGABRT somewhere between
+        // Mobile.setup() and Mobile.start() returning; logcat alone shows only the final
+        // native abort, not which of these two calls was in flight. Investigated 2026-09-03.
+        private const val LOG_BG_CONNECT = true
+        private fun clog(step: Int, desc: String, value: String? = null) {
+            if (!LOG_BG_CONNECT) return
+            val valPart = if (value != null) ": " + value.take(120) else ""
+            Log.d(TAG, "[log-bg-connect] step " + step + " -- " + desc + valPart)
+        }
+
         private var initializeOnce = false
         private lateinit var workingDir: File
         private fun initialize() {
@@ -138,6 +149,7 @@ class BoxService(
 
     private var activeProfileName = ""
     private suspend fun startService() {
+        clog(1, "startService() entered")
         try {
             status.postValue(Status.Starting)
             Log.d(TAG, "starting service")
@@ -147,9 +159,11 @@ class BoxService(
 
             val selectedConfigPath = Settings.activeConfigPath
             if (selectedConfigPath.isBlank()) {
+                clog(2, "EARLY EXIT -- activeConfigPath is blank")
                 stopAndAlert(Alert.EmptyConfiguration)
                 return
             }
+            clog(2, "config path present", selectedConfigPath)
 
             activeProfileName = Settings.activeProfileName
 
@@ -161,6 +175,7 @@ class BoxService(
             }
 
             DefaultNetworkMonitor.start()
+            clog(3, "DefaultNetworkMonitor started, about to call Mobile.setup()", "platformInterface=" + platformInterface.toString())
             Libbox.setMemoryLimit(!Settings.disableMemoryLimit)
             val newService = try {
                 Mobile.setup(
@@ -179,13 +194,17 @@ class BoxService(
 //                Libbox.newService(content,platformInterface)
 
             } catch (e: Exception) {
+                clog(4, "Mobile.setup() THREW -- caught in Kotlin, not a native crash", e.message ?: "no message")
                 stopAndAlert(Alert.CreateService, e.message)
                 return
             }
+            clog(4, "Mobile.setup() returned OK")
             status.postValue(Status.Started)
 
             if (Settings.startCoreAfterStartingService){
+                clog(5, "about to call Mobile.start() -- if step 6 never logs, the native crash is inside this call")
                 Mobile.start("","")
+                clog(6, "Mobile.start() returned OK")
                 }
 //            if (delayStart) {
 //                delay(1000L)
@@ -200,7 +219,9 @@ class BoxService(
                 notification.show(activeProfileName, R.string.status_started)
             }
             notification.start()
+            clog(7, "startService() completed normally")
         } catch (e: Exception) {
+            clog(8, "startService() top-level catch -- Kotlin exception, not the native crash", e.message ?: "no message")
             stopAndAlert(Alert.StartService, e.message)
             return
         }
