@@ -1,4 +1,5 @@
 package com.hiddify.hiddify.bg
+// ci-retrigger: 2026-09-03 (previous hiddify-app run hit a hiddify-core release-asset publish race, see hiddify-core commit 0cd8099)
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
