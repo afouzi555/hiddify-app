@@ -48,6 +48,37 @@ class VPNService : VpnService(), PlatformInterfaceWrapper {
         }
     }
 
+    // D159 -- disables the usePlatformAutoDetectInterfaceControl() JNI callback path
+    // entirely, per explicit user decision after D155/D157/D158 disproved the GC-
+    // reachability theory with real device evidence: D158 kept ctx (and therefore the
+    // registered platformWrapper) reachable from the moment of registration onward, yet
+    // the Nord 5G crash ("go/Seq: Unknown reference: 42", inside
+    // cproxylibbox_PlatformInterface_AutoDetectInterfaceControl) still fired essentially
+    // immediately on CONNECTED. Traced into gomobile's own go_seq_from_refnum()
+    // (github.com/sagernet/gomobile bind/java/seq_android.c.support): the abort means the
+    // Java object's BASELINE hold (from its one-time registration) had already dropped to
+    // zero, independent of Go-side reachability -- a bug in gomobile's own per-call
+    // increment/decrement protocol, not in any app-level code. This exact signature
+    // matches an already-known, closed-as-"not planned" upstream issue
+    // (SagerNet/sing-box#1895).
+    //
+    // usePlatformAutoDetectInterfaceControl() being true makes sing-box's Go side call
+    // this method (-> protect(fd)) on essentially every new raw socket the underlying
+    // transport opens -- by far the highest-frequency caller of the refnum bridge, which
+    // is why it's become the dominant crash site: not because this method is special, but
+    // because it's statistically most likely to be "next" whenever the baseline hold gets
+    // dropped, whatever the real cause.
+    //
+    // RISK, read hiddify-sing-box/route/network.go's NetworkManager.ProtectFunc(): when
+    // usePlatformAutoDetectInterfaceControl() is false, ProtectFunc() returns nil --
+    // *no* outbound-socket VPN-protection at all via this path (not a fallback to a
+    // different protect mechanism). On Android, VpnService.protect() is normally the
+    // standard way to keep the underlying transport's own connections from being captured
+    // by the app's own TUN routing. This trades the crash for a real (untested until this
+    // device retest) routing-loop/hang risk. Revert this commit immediately if the Nord 5G
+    // connects but then hangs/loops instead of passing real traffic.
+    override fun usePlatformAutoDetectInterfaceControl(): Boolean = false
+
     override fun autoDetectInterfaceControl(fd: Int) {
         protect(fd)
     }
