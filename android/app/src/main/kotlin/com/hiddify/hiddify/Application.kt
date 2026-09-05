@@ -25,15 +25,30 @@ class Application : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // D156 -- diagnostic only, investigating the Nord 5G "Unknown reference: 42" crash
-        // (go/Seq abort, gomobile JNI reference bridge). GODEBUG must be set via the process's
-        // own environment BEFORE the Go runtime initializes -- Seq's static initializer (fired
-        // by the very next line, Seq.setContext()) is what calls System.loadLibrary("gojni"),
-        // which is when Go's runtime actually starts. gctrace=1 makes Go print one line per GC
-        // cycle (gc N @Ts ...) to stderr, which Libbox.redirectStderr() already routes to
-        // stderr.log -- pull that file after a reproduction and compare its GC-cycle timestamps
-        // directly against the [log-hcore-connect] step timestamps and the native crash time,
-        // to confirm or rule out a GC-cycle correlation before attempting another fix.
+        // D156 -- SUPERSEDED BY D157, kept only because it's harmless (see below). Originally
+        // added to investigate the Nord 5G "Unknown reference: 42" crash (go/Seq abort,
+        // gomobile JNI reference bridge) by making Go's runtime print one GC-cycle trace line
+        // per cycle to stderr, on the theory that Libbox.redirectStderr() (BoxService.kt)
+        // would capture it in on-device stderr.log for comparison against the crash timing.
+        //
+        // That theory was WRONG, confirmed by testing this exact patch on-device: stderr.log
+        // stayed empty even after ~28 minutes of runtime. Root cause (see hiddify-core's D157
+        // commit message and OPTIMUS_VPN_SECURITY_PRIVACY_DOC.md section 9.4.3 for the full
+        // writeup): Libbox.redirectStderr() doesn't redirect stderr at all -- it wires Go
+        // 1.23+'s debug.SetCrashOutput(), which only captures a fatal Go runtime crash dump,
+        // never GODEBUG=gctrace's periodic output (written straight to the raw OS-level fd 2,
+        // bypassing SetCrashOutput entirely). The real GC-timing diagnostic that actually
+        // worked lives in hiddify-core's v2/hcore/start.go (hclogGCStats(), D157) instead,
+        // polling runtime.ReadMemStats() through the already-proven hclog()/app.log channel.
+        //
+        // GODEBUG must still be set via the process's own environment BEFORE the Go runtime
+        // initializes -- Seq's static initializer (fired by the very next line,
+        // Seq.setContext()) is what calls System.loadLibrary("gojni"), which is when Go's
+        // runtime actually starts -- so this remains a technically-correct place to set any
+        // GODEBUG flag; gctrace=1 specifically is just pointless now since nothing reads its
+        // output. Left in place (rather than removed) because it's inert and harmless, and a
+        // future agent adding a DIFFERENT GODEBUG flag that Go's runtime.SetCrashOutput or
+        // logcat *can* surface would want this exact injection point.
         try {
             Os.setenv("GODEBUG", "gctrace=1", true)
         } catch (e: Exception) {
